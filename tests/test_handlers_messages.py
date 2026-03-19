@@ -122,6 +122,44 @@ class TestMessagesHandlers(unittest.IsolatedAsyncioTestCase):
         bot.get_file.assert_not_called()
         bot.download_file.assert_not_called()
 
+    def test_mode_keyboard_texts_and_callback_data(self) -> None:
+        keyboard = messages._mode_keyboard()
+        buttons = [button for row in keyboard.inline_keyboard for button in row]
+        text_to_callback = {button.text: button.callback_data for button in buttons}
+
+        self.assertEqual(text_to_callback["Обычный"], "mode:normal")
+        self.assertEqual(text_to_callback["По лицу"], "mode:face")
+        self.assertEqual(text_to_callback["Стиль"], "mode:style")
+        self.assertEqual(text_to_callback["Очистить фон"], "mode:clean")
+        self.assertEqual(text_to_callback["Срисовать"], "mode:redraw")
+        self.assertEqual(text_to_callback["Мягче"], "redraw:softer")
+        self.assertEqual(text_to_callback["Чётче"], "redraw:sharper")
+        self.assertEqual(text_to_callback["Плотнее"], "redraw:denser")
+        self.assertEqual(text_to_callback["Цветов −"], "redraw:colors_down")
+        self.assertEqual(text_to_callback["Цветов +"], "redraw:colors_up")
+        self.assertEqual(text_to_callback["Контур"], "redraw:outline")
+        self.assertEqual(text_to_callback["Сброс"], "redraw:reset")
+
+    def test_redraw_status_text_is_russian_human_readable(self) -> None:
+        status = messages._redraw_status_text(
+            messages.RedrawSettings(
+                colors=64,
+                blur=0.35,
+                sharpen=105,
+                scale=0.92,
+                outline=True,
+            )
+        )
+        self.assertEqual(
+            status,
+            "Срисовать:\n"
+            "Цветов: 64\n"
+            "Мягкость: 0.35\n"
+            "Резкость: 105\n"
+            "Размер: 0.92\n"
+            "Контур: включён",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
