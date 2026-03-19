@@ -106,7 +106,7 @@ class TestImageProcessing(unittest.TestCase):
         self.assertEqual(out.size, (100, 100))
         self.assertEqual(out.mode, "RGBA")
 
-    def test_add_outline_adds_white_ring_around_alpha(self) -> None:
+    def test_add_outline_creates_white_border(self) -> None:
         src = Image.new("RGBA", (20, 20), (0, 0, 0, 0))
         for x in range(8, 12):
             for y in range(8, 12):

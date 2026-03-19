@@ -40,9 +40,6 @@ def _remove_background_if_enabled(image: Image.Image, enabled: bool) -> Image.Im
 
 def _content_bbox(image: Image.Image) -> tuple[int, int, int, int]:
     alpha = np.array(image.split()[-1])
-    if np.all(alpha == 0):
-        raise ImageProcessingError("Image is empty after processing.")
-
     if np.all(alpha == 255):
         grayscale = np.array(image.convert("L"))
         ys, xs = np.where(grayscale < BACKGROUND_THRESHOLD)
@@ -93,9 +90,8 @@ def add_outline(image: Image.Image, thickness: int = 2) -> Image.Image:
         return source
 
     alpha = source.split()[-1]
-    expanded = alpha
-    for _ in range(thickness):
-        expanded = expanded.filter(ImageFilter.MaxFilter(3))
+    kernel_size = max(3, 2 * thickness + 1)
+    expanded = alpha.filter(ImageFilter.MaxFilter(kernel_size))
 
     outline = Image.new("RGBA", source.size, (255, 255, 255, 0))
     outline.putalpha(expanded)
