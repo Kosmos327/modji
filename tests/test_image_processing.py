@@ -1,12 +1,16 @@
 import unittest
 from io import BytesIO
+from zipfile import ZipFile
+from unittest.mock import patch
 
 from PIL import Image
 
 from image_processing import (
     ImageProcessingError,
     add_outline,
+    apply_emoji_style,
     build_emoji_image,
+    export_batch_zip,
     export_png_webp,
 )
 
@@ -117,6 +121,49 @@ class TestImageProcessing(unittest.TestCase):
         self.assertEqual(outlined.size, src.size)
         self.assertEqual(outlined.getpixel((9, 9)), (255, 0, 0, 255))
         self.assertEqual(outlined.getpixel((7, 9)), (255, 255, 255, 255))
+
+    def test_face_detection_fallback_uses_content_bbox(self) -> None:
+        src = Image.new("RGBA", (160, 160), (0, 0, 0, 0))
+        for x in range(30, 130):
+            for y in range(40, 120):
+                src.putpixel((x, y), (255, 0, 0, 255))
+
+        with patch("image_processing._detect_face_bbox", return_value=None):
+            out = build_emoji_image(
+                _image_to_bytes(src),
+                use_face_detection=True,
+            )
+        self.assertEqual(out.size, (100, 100))
+        self.assertEqual(out.mode, "RGBA")
+        bbox = out.split()[-1].getbbox()
+        self.assertIsNotNone(bbox)
+
+    def test_apply_emoji_style_preserves_rgba_and_alpha(self) -> None:
+        src = Image.new("RGBA", (40, 40), (120, 60, 60, 0))
+        for x in range(10, 30):
+            for y in range(10, 30):
+                src.putpixel((x, y), (120, 60, 60, 255))
+
+        styled = apply_emoji_style(src)
+        self.assertEqual(styled.mode, "RGBA")
+        self.assertEqual(styled.size, src.size)
+        self.assertEqual(styled.getpixel((0, 0))[3], 0)
+        self.assertEqual(styled.getpixel((20, 20))[3], 255)
+
+    def test_export_batch_zip_contains_indexed_png_files(self) -> None:
+        first = Image.new("RGBA", (100, 100), (255, 0, 0, 255))
+        second = Image.new("RGBA", (100, 100), (0, 255, 0, 255))
+        zip_data = export_batch_zip([first, second])
+        self.assertGreater(len(zip_data), 0)
+
+        with ZipFile(BytesIO(zip_data), mode="r") as archive:
+            names = sorted(archive.namelist())
+            self.assertEqual(names, ["emoji_1.png", "emoji_2.png"])
+            for name in names:
+                payload = archive.read(name)
+                image = Image.open(BytesIO(payload))
+                self.assertEqual(image.size, (100, 100))
+                self.assertEqual(image.mode, "RGBA")
 
 
 if __name__ == "__main__":
