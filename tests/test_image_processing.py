@@ -165,6 +165,45 @@ class TestImageProcessing(unittest.TestCase):
                 self.assertEqual(image.size, (100, 100))
                 self.assertEqual(image.mode, "RGBA")
 
+    def test_redraw_mode_returns_100x100_rgba_image(self) -> None:
+        src = Image.new("RGBA", (240, 180), (0, 0, 0, 0))
+        for x in range(60, 180):
+            for y in range(40, 150):
+                src.putpixel((x, y), (80, 130, 200, 255))
+
+        out = build_emoji_image(_image_to_bytes(src), redraw_mode=True)
+        self.assertEqual(out.size, (100, 100))
+        self.assertEqual(out.mode, "RGBA")
+
+    def test_redraw_mode_preserves_transparency(self) -> None:
+        src = Image.new("RGBA", (120, 120), (0, 0, 0, 0))
+        for x in range(30, 90):
+            for y in range(30, 90):
+                src.putpixel((x, y), (255, 120, 0, 255))
+
+        out = build_emoji_image(_image_to_bytes(src), redraw_mode=True)
+        self.assertEqual(out.getpixel((0, 0))[3], 0)
+        self.assertEqual(out.getpixel((99, 99))[3], 0)
+        self.assertGreater(out.getpixel((50, 50))[3], 0)
+
+    def test_redraw_mode_exports_valid_png_and_webp(self) -> None:
+        src = Image.new("RGBA", (160, 160), (0, 0, 0, 0))
+        for x in range(40, 120):
+            for y in range(40, 120):
+                src.putpixel((x, y), (20, 200, 80, 255))
+
+        out = build_emoji_image(_image_to_bytes(src), redraw_mode=True)
+        png_data, webp_data = export_png_webp(out)
+        self.assertGreater(len(png_data), 0)
+        self.assertGreater(len(webp_data), 0)
+
+        png_img = Image.open(BytesIO(png_data))
+        webp_img = Image.open(BytesIO(webp_data))
+        self.assertEqual(png_img.mode, "RGBA")
+        self.assertEqual(webp_img.mode, "RGBA")
+        self.assertEqual(png_img.size, (100, 100))
+        self.assertEqual(webp_img.size, (100, 100))
+
 
 if __name__ == "__main__":
     unittest.main()

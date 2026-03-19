@@ -9,10 +9,13 @@ from PIL import Image, ImageEnhance, ImageFilter, UnidentifiedImageError
 
 CANVAS_SIZE = 100
 SCALE_RATIO = 0.85
+REDRAW_SCALE_RATIO = 0.90
 MAX_CONTENT_SIZE = int(CANVAS_SIZE * SCALE_RATIO)
+REDRAW_MAX_CONTENT_SIZE = int(CANVAS_SIZE * REDRAW_SCALE_RATIO)
 BACKGROUND_THRESHOLD = 240
 PROCESSING_MODE_FAST = "FAST"
 PROCESSING_MODE_CLEAN = "CLEAN"
+REDRAW_COLOR_COUNT = 96
 
 
 class ImageProcessingError(Exception):
@@ -166,6 +169,21 @@ def apply_emoji_style(image: Image.Image) -> Image.Image:
     return styled_rgb
 
 
+def apply_redraw_style(image: Image.Image) -> Image.Image:
+    rgba = image.convert("RGBA")
+    alpha = rgba.split()[-1]
+    quantized = rgba.convert("RGB").quantize(
+        colors=REDRAW_COLOR_COUNT,
+        method=Image.Quantize.MEDIANCUT,
+    )
+    redrawn = quantized.convert("RGB").filter(ImageFilter.GaussianBlur(radius=0.5))
+    redrawn = redrawn.filter(
+        ImageFilter.UnsharpMask(radius=1, percent=115, threshold=3)
+    )
+    redrawn.putalpha(alpha)
+    return redrawn
+
+
 def build_emoji_image(
     image_bytes: bytes,
     remove_background: bool = False,
@@ -174,6 +192,9 @@ def build_emoji_image(
     apply_style: bool = False,
     with_outline: bool = False,
     outline_thickness: int = 2,
+    redraw_mode: bool = False,
+    redraw_outline: bool = True,
+    redraw_outline_thickness: int = 1,
 ) -> Image.Image:
     # 1-2. Open image and normalize to RGBA.
     image = _open_rgba(image_bytes)
@@ -194,11 +215,17 @@ def build_emoji_image(
         bbox = _content_bbox(image)
     image = image.crop(bbox)
 
-    # 7. Scale object proportionally to fit based on SCALE_RATIO.
-    image = _resize_to_fit(image, max_side=MAX_CONTENT_SIZE)
+    # 7. Scale object proportionally to fit based on mode-specific ratio.
+    max_content_size = REDRAW_MAX_CONTENT_SIZE if redraw_mode else MAX_CONTENT_SIZE
+    image = _resize_to_fit(image, max_side=max_content_size)
 
-    if apply_style:
+    if redraw_mode:
+        image = apply_redraw_style(image)
+    elif apply_style:
         image = apply_emoji_style(image)
+
+    if redraw_mode and redraw_outline:
+        image = add_outline(image, thickness=redraw_outline_thickness)
 
     if with_outline:
         image = add_outline(image, thickness=outline_thickness)
