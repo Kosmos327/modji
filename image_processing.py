@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from io import BytesIO
+from typing import Iterable
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import numpy as np
-from PIL import Image, ImageFilter, UnidentifiedImageError
+from PIL import Image, ImageEnhance, ImageFilter, UnidentifiedImageError
 
 CANVAS_SIZE = 100
 SCALE_RATIO = 0.85
@@ -51,6 +53,51 @@ def _content_bbox(image: Image.Image) -> tuple[int, int, int, int]:
     left, right = int(xs.min()), int(xs.max())
     top, bottom = int(ys.min()), int(ys.max())
     return left, top, right + 1, bottom + 1
+
+
+def _expand_bbox(
+    bbox: tuple[int, int, int, int], image_size: tuple[int, int], ratio: float = 0.3
+) -> tuple[int, int, int, int]:
+    left, top, right, bottom = bbox
+    width = right - left
+    height = bottom - top
+    if width <= 0 or height <= 0:
+        return bbox
+
+    pad_x = int(round(width * ratio / 2))
+    pad_y = int(round(height * ratio / 2))
+    image_w, image_h = image_size
+    return (
+        max(0, left - pad_x),
+        max(0, top - pad_y),
+        min(image_w, right + pad_x),
+        min(image_h, bottom + pad_y),
+    )
+
+
+def _detect_face_bbox(image: Image.Image) -> tuple[int, int, int, int] | None:
+    try:
+        import cv2
+    except Exception:  # pragma: no cover - runtime dependency failure
+        return None
+
+    gray = np.array(image.convert("L"))
+    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    cascade = cv2.CascadeClassifier(cascade_path)
+    if cascade.empty():
+        return None
+
+    faces = cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(20, 20),
+    )
+    if len(faces) == 0:
+        return None
+
+    x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+    return _expand_bbox((int(x), int(y), int(x + w), int(y + h)), image.size, ratio=0.3)
 
 
 def _resize_to_fit(image: Image.Image, max_side: int = MAX_CONTENT_SIZE) -> Image.Image:
@@ -108,10 +155,23 @@ def _apply_unsharp(image: Image.Image) -> Image.Image:
     return rgb
 
 
+def apply_emoji_style(image: Image.Image) -> Image.Image:
+    rgba = image.convert("RGBA")
+    alpha = rgba.split()[-1]
+
+    styled_rgb = ImageEnhance.Contrast(rgba.convert("RGB")).enhance(1.3)
+    styled_rgb = ImageEnhance.Color(styled_rgb).enhance(1.2)
+    styled_rgb = styled_rgb.filter(ImageFilter.SMOOTH)
+    styled_rgb.putalpha(alpha)
+    return styled_rgb
+
+
 def build_emoji_image(
     image_bytes: bytes,
     remove_background: bool = False,
     mode: str | None = None,
+    use_face_detection: bool = False,
+    apply_style: bool = False,
     with_outline: bool = False,
     outline_thickness: int = 2,
 ) -> Image.Image:
@@ -126,12 +186,19 @@ def build_emoji_image(
     # 4. Upscale too-small images before object detection.
     image = _upscale_if_small(image, min_side=CANVAS_SIZE)
 
-    # 5-6. Detect object bbox and crop to it.
-    bbox = _content_bbox(image)
+    # 5-6. Face-centering priority with fallback bbox detection.
+    bbox: tuple[int, int, int, int] | None = None
+    if use_face_detection:
+        bbox = _detect_face_bbox(image)
+    if bbox is None:
+        bbox = _content_bbox(image)
     image = image.crop(bbox)
 
     # 7. Scale object proportionally to fit based on SCALE_RATIO.
     image = _resize_to_fit(image, max_side=MAX_CONTENT_SIZE)
+
+    if apply_style:
+        image = apply_emoji_style(image)
 
     if with_outline:
         image = add_outline(image, thickness=outline_thickness)
@@ -160,3 +227,12 @@ def export_png_webp(image: Image.Image) -> tuple[bytes, bytes]:
     image.save(webp_buffer, format="WEBP", quality=100, lossless=True)
 
     return png_buffer.getvalue(), webp_buffer.getvalue()
+
+
+def export_batch_zip(images: Iterable[Image.Image]) -> bytes:
+    zip_buffer = BytesIO()
+    with ZipFile(zip_buffer, mode="w", compression=ZIP_DEFLATED) as zip_file:
+        for index, image in enumerate(images, start=1):
+            png_data, _ = export_png_webp(image)
+            zip_file.writestr(f"emoji_{index}.png", png_data)
+    return zip_buffer.getvalue()
