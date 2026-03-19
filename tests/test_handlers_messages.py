@@ -18,7 +18,9 @@ def _image_to_bytes(image: Image.Image, fmt: str = "PNG") -> bytes:
 class TestMessagesHandlers(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         messages.USER_OPTIONS.clear()
+        messages.USER_REDRAW_SETTINGS.clear()
         messages.USER_LAST_FILE_IDS.clear()
+        messages.USER_LAST_ORIGINAL_IMAGES.clear()
         messages.MEDIA_GROUP_ITEMS.clear()
         for task in messages.MEDIA_GROUP_TASKS.values():
             task.cancel()
@@ -42,6 +44,7 @@ class TestMessagesHandlers(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace()
         message.bot = bot
         message.answer_document = AsyncMock()
+        message.answer = AsyncMock()
 
         callback = SimpleNamespace(
             from_user=SimpleNamespace(id=user_id),
@@ -57,6 +60,67 @@ class TestMessagesHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mocked.call_args.kwargs.get("image_bytes"), image_bytes)
         self.assertEqual(message.answer_document.await_count, 2)
         callback.answer.assert_awaited()
+
+    async def test_redraw_tune_updates_only_current_user_settings(self) -> None:
+        user_a = 101
+        user_b = 202
+        payload = b"image-bytes"
+        messages.USER_LAST_ORIGINAL_IMAGES[user_a] = payload
+        messages.USER_LAST_ORIGINAL_IMAGES[user_b] = payload
+
+        message = SimpleNamespace()
+        message.answer_document = AsyncMock()
+        message.answer = AsyncMock()
+
+        callback = SimpleNamespace(
+            from_user=SimpleNamespace(id=user_a),
+            data="redraw:colors_up",
+            message=message,
+            answer=AsyncMock(),
+        )
+
+        with patch("handlers.messages.build_emoji_image") as mocked_build, patch(
+            "handlers.messages.export_png_webp", return_value=(b"png", b"webp")
+        ):
+            await messages.tune_redraw(callback)
+
+        settings_a = messages.USER_REDRAW_SETTINGS[user_a]
+        settings_b = messages.USER_REDRAW_SETTINGS.get(user_b)
+        self.assertEqual(settings_a.colors, 72)
+        self.assertIsNone(settings_b)
+        self.assertEqual(mocked_build.call_args.kwargs["redraw_colors"], 72)
+        callback.answer.assert_awaited()
+
+    async def test_redraw_tune_reuses_cached_original_bytes(self) -> None:
+        user_id = 303
+        original_bytes = b"original-image"
+        messages.USER_LAST_ORIGINAL_IMAGES[user_id] = original_bytes
+        messages.USER_LAST_FILE_IDS[user_id] = "file-x"
+
+        bot = SimpleNamespace()
+        bot.get_file = AsyncMock()
+        bot.download_file = AsyncMock()
+
+        message = SimpleNamespace()
+        message.bot = bot
+        message.answer_document = AsyncMock()
+        message.answer = AsyncMock()
+
+        callback = SimpleNamespace(
+            from_user=SimpleNamespace(id=user_id),
+            data="redraw:sharper",
+            message=message,
+            answer=AsyncMock(),
+        )
+
+        with patch("handlers.messages.build_emoji_image") as mocked_build, patch(
+            "handlers.messages.export_png_webp", return_value=(b"png", b"webp")
+        ):
+            await messages.tune_redraw(callback)
+
+        self.assertEqual(mocked_build.call_args.kwargs["image_bytes"], original_bytes)
+        bot.get_file.assert_not_called()
+        bot.download_file.assert_not_called()
 
 
 if __name__ == "__main__":

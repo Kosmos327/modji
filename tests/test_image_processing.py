@@ -10,6 +10,7 @@ from image_processing import (
     add_outline,
     apply_emoji_style,
     build_emoji_image,
+    clamp_redraw_settings,
     export_batch_zip,
     export_png_webp,
 )
@@ -22,6 +23,20 @@ def _image_to_bytes(image: Image.Image, fmt: str = "PNG") -> bytes:
 
 
 class TestImageProcessing(unittest.TestCase):
+    def test_redraw_settings_clamp_to_safe_limits(self) -> None:
+        colors, blur, sharpen, scale, outline_thickness = clamp_redraw_settings(
+            colors=999,
+            blur=-1.0,
+            sharpen=0,
+            scale=2.0,
+            outline_thickness=99,
+        )
+        self.assertEqual(colors, 128)
+        self.assertEqual(blur, 0.0)
+        self.assertEqual(sharpen, 60)
+        self.assertEqual(scale, 0.96)
+        self.assertEqual(outline_thickness, 2)
+
     def test_build_emoji_image_centers_and_scales_content(self) -> None:
         src = Image.new("RGBA", (300, 200), (0, 0, 0, 0))
         for x in range(100, 200):
