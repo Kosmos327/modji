@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_MIME_PREFIXES = ("image/",)
 ENABLE_BACKGROUND_REMOVAL = os.getenv("ENABLE_BACKGROUND_REMOVAL", "0") == "1"
 BATCH_GROUP_WAIT_TIMEOUT = 1.2
+NO_IMAGE_FOUND_MESSAGE = "No image found. Send an image first."
 
 
 @dataclass
@@ -41,6 +42,7 @@ class ProcessingOptions:
 
 
 USER_OPTIONS: dict[int, ProcessingOptions] = {}
+USER_LAST_FILE_IDS: dict[int, str] = {}
 MEDIA_GROUP_ITEMS: dict[str, list[tuple[Message, bytes]]] = {}
 MEDIA_GROUP_TASKS: dict[str, asyncio.Task[Any]] = {}
 
@@ -55,6 +57,9 @@ def _mode_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="Style mode", callback_data="mode:style"),
                 InlineKeyboardButton(text="Clean mode", callback_data="mode:clean"),
+            ],
+            [
+                InlineKeyboardButton(text="Срисовать", callback_data="mode:redraw"),
             ],
         ]
     )
@@ -101,6 +106,14 @@ def _build_emoji_from_bytes(
         apply_style=options.apply_style,
         with_outline=options.with_outline,
     )
+
+
+async def _download_file_by_id(message: Message, file_id: str) -> bytes:
+    file = await message.bot.get_file(file_id)
+    if not file.file_path:
+        raise ImageProcessingError("Failed to download image file.")
+    data = await message.bot.download_file(file.file_path)
+    return data.read()
 
 
 async def _process_single_image(
@@ -153,7 +166,8 @@ async def batch_command(message: Message) -> None:
 
 @router.callback_query(F.data.startswith("mode:"))
 async def set_mode(callback: CallbackQuery) -> None:
-    options = _get_options(callback.from_user.id if callback.from_user else None)
+    user_id = callback.from_user.id if callback.from_user else None
+    options = _get_options(user_id)
     mode = "normal"
     if callback.data and ":" in callback.data:
         mode = callback.data.split(":", maxsplit=1)[1]
@@ -173,6 +187,34 @@ async def set_mode(callback: CallbackQuery) -> None:
         options.mode = "CLEAN"
         options.use_face_detection = False
         options.apply_style = False
+    elif mode == "redraw":
+        if callback.message is None or user_id is None:
+            await callback.answer(NO_IMAGE_FOUND_MESSAGE, show_alert=True)
+            return
+        file_id = USER_LAST_FILE_IDS.get(user_id)
+        if not file_id:
+            await callback.answer(NO_IMAGE_FOUND_MESSAGE, show_alert=True)
+            return
+        image_bytes = await _download_file_by_id(callback.message, file_id)
+        processed = build_emoji_image(
+            image_bytes=image_bytes,
+            remove_background=ENABLE_BACKGROUND_REMOVAL,
+            mode=options.mode,
+            use_face_detection=options.use_face_detection,
+            apply_style=False,
+            with_outline=False,
+            redraw_mode=True,
+        )
+        png_bytes, webp_bytes = export_png_webp(processed)
+        await callback.message.answer_document(
+            BufferedInputFile(png_bytes, filename="emoji.png"),
+            caption="Done! Here is your Telegram-compatible static emoji.",
+        )
+        await callback.message.answer_document(
+            BufferedInputFile(webp_bytes, filename="emoji.webp"),
+        )
+        await callback.answer("Срисовано")
+        return
 
     await callback.answer("Mode updated")
     if callback.message:
@@ -183,6 +225,11 @@ async def set_mode(callback: CallbackQuery) -> None:
 async def process_image(message: Message) -> None:
     try:
         image_bytes = await _download_message_file(message)
+        if message.from_user:
+            if message.photo:
+                USER_LAST_FILE_IDS[message.from_user.id] = message.photo[-1].file_id
+            elif message.document:
+                USER_LAST_FILE_IDS[message.from_user.id] = message.document.file_id
         options = _get_options(message.from_user.id if message.from_user else None)
         if message.media_group_id:
             group_id = str(message.media_group_id)

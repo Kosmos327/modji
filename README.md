@@ -21,3 +21,4 @@ Telegram bot for converting images into Telegram-compatible emoji assets.
 - Face mode
 - Style mode
 - Clean mode
+- Срисовать
