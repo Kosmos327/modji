@@ -19,7 +19,14 @@ from PIL import Image
 
 from image_processing import (
     ImageProcessingError,
+    REDRAW_DEFAULT_BLUR,
+    REDRAW_DEFAULT_COLORS,
+    REDRAW_DEFAULT_OUTLINE,
+    REDRAW_DEFAULT_OUTLINE_THICKNESS,
+    REDRAW_DEFAULT_SCALE,
+    REDRAW_DEFAULT_SHARPEN,
     build_emoji_image,
+    clamp_redraw_settings,
     export_batch_zip,
     export_png_webp,
 )
@@ -41,8 +48,20 @@ class ProcessingOptions:
     with_outline: bool = False
 
 
+@dataclass
+class RedrawSettings:
+    colors: int = REDRAW_DEFAULT_COLORS
+    blur: float = REDRAW_DEFAULT_BLUR
+    sharpen: int = REDRAW_DEFAULT_SHARPEN
+    scale: float = REDRAW_DEFAULT_SCALE
+    outline: bool = REDRAW_DEFAULT_OUTLINE
+    outline_thickness: int = REDRAW_DEFAULT_OUTLINE_THICKNESS
+
+
 USER_OPTIONS: dict[int, ProcessingOptions] = {}
+USER_REDRAW_SETTINGS: dict[int, RedrawSettings] = {}
 USER_LAST_FILE_IDS: dict[int, str] = {}
+USER_LAST_ORIGINAL_IMAGES: dict[int, bytes] = {}
 MEDIA_GROUP_ITEMS: dict[str, list[tuple[Message, bytes]]] = {}
 MEDIA_GROUP_TASKS: dict[str, asyncio.Task[Any]] = {}
 
@@ -61,6 +80,19 @@ def _mode_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="Срисовать", callback_data="mode:redraw"),
             ],
+            [
+                InlineKeyboardButton(text="Мягче", callback_data="redraw:softer"),
+                InlineKeyboardButton(text="Чётче", callback_data="redraw:sharper"),
+            ],
+            [
+                InlineKeyboardButton(text="Плотнее", callback_data="redraw:denser"),
+                InlineKeyboardButton(text="Цветов -", callback_data="redraw:colors_down"),
+                InlineKeyboardButton(text="Цветов +", callback_data="redraw:colors_up"),
+            ],
+            [
+                InlineKeyboardButton(text="Контур", callback_data="redraw:outline"),
+                InlineKeyboardButton(text="Сброс", callback_data="redraw:reset"),
+            ],
         ]
     )
 
@@ -69,6 +101,41 @@ def _get_options(user_id: int | None) -> ProcessingOptions:
     if user_id is None:
         return ProcessingOptions()
     return USER_OPTIONS.setdefault(user_id, ProcessingOptions())
+
+
+def _get_redraw_settings(user_id: int | None) -> RedrawSettings:
+    if user_id is None:
+        return RedrawSettings()
+    return USER_REDRAW_SETTINGS.setdefault(user_id, RedrawSettings())
+
+
+def _clamp_redraw_settings(settings: RedrawSettings) -> RedrawSettings:
+    (
+        settings.colors,
+        settings.blur,
+        settings.sharpen,
+        settings.scale,
+        settings.outline_thickness,
+    ) = clamp_redraw_settings(
+        colors=settings.colors,
+        blur=settings.blur,
+        sharpen=settings.sharpen,
+        scale=settings.scale,
+        outline_thickness=settings.outline_thickness,
+    )
+    return settings
+
+
+def _redraw_status_text(settings: RedrawSettings) -> str:
+    outline_state = "on" if settings.outline else "off"
+    return (
+        "REDRAW: "
+        f"colors={settings.colors}, "
+        f"blur={settings.blur:.2f}, "
+        f"sharpen={settings.sharpen}, "
+        f"scale={settings.scale:.2f}, "
+        f"outline={outline_state}"
+    )
 
 
 async def _download_message_file(message: Message) -> bytes:
@@ -114,6 +181,53 @@ async def _download_file_by_id(message: Message, file_id: str) -> bytes:
         raise ImageProcessingError("Failed to download image file.")
     data = await message.bot.download_file(file.file_path)
     return data.read()
+
+
+async def _process_redraw_callback(
+    callback: CallbackQuery,
+    *,
+    options: ProcessingOptions,
+    settings: RedrawSettings,
+    user_id: int | None,
+) -> None:
+    if callback.message is None or user_id is None:
+        await callback.answer(NO_IMAGE_FOUND_MESSAGE, show_alert=True)
+        return
+
+    image_bytes = USER_LAST_ORIGINAL_IMAGES.get(user_id)
+    if image_bytes is None:
+        file_id = USER_LAST_FILE_IDS.get(user_id)
+        if not file_id:
+            await callback.answer(NO_IMAGE_FOUND_MESSAGE, show_alert=True)
+            return
+        image_bytes = await _download_file_by_id(callback.message, file_id)
+        USER_LAST_ORIGINAL_IMAGES[user_id] = image_bytes
+
+    processed = build_emoji_image(
+        image_bytes=image_bytes,
+        remove_background=ENABLE_BACKGROUND_REMOVAL,
+        mode=options.mode,
+        use_face_detection=options.use_face_detection,
+        apply_style=False,
+        with_outline=False,
+        redraw_mode=True,
+        redraw_colors=settings.colors,
+        redraw_blur=settings.blur,
+        redraw_sharpen=settings.sharpen,
+        redraw_scale=settings.scale,
+        redraw_outline=settings.outline,
+        redraw_outline_thickness=settings.outline_thickness,
+    )
+    png_bytes, webp_bytes = export_png_webp(processed)
+    await callback.message.answer_document(
+        BufferedInputFile(png_bytes, filename="emoji.png"),
+        caption="Done! Here is your Telegram-compatible static emoji.",
+    )
+    await callback.message.answer_document(
+        BufferedInputFile(webp_bytes, filename="emoji.webp"),
+    )
+    await callback.message.answer(_redraw_status_text(settings))
+    await callback.answer("Срисовано")
 
 
 async def _process_single_image(
@@ -188,32 +302,13 @@ async def set_mode(callback: CallbackQuery) -> None:
         options.use_face_detection = False
         options.apply_style = False
     elif mode == "redraw":
-        if callback.message is None or user_id is None:
-            await callback.answer(NO_IMAGE_FOUND_MESSAGE, show_alert=True)
-            return
-        file_id = USER_LAST_FILE_IDS.get(user_id)
-        if not file_id:
-            await callback.answer(NO_IMAGE_FOUND_MESSAGE, show_alert=True)
-            return
-        image_bytes = await _download_file_by_id(callback.message, file_id)
-        processed = build_emoji_image(
-            image_bytes=image_bytes,
-            remove_background=ENABLE_BACKGROUND_REMOVAL,
-            mode=options.mode,
-            use_face_detection=options.use_face_detection,
-            apply_style=False,
-            with_outline=False,
-            redraw_mode=True,
+        settings = _clamp_redraw_settings(_get_redraw_settings(user_id))
+        await _process_redraw_callback(
+            callback,
+            options=options,
+            settings=settings,
+            user_id=user_id,
         )
-        png_bytes, webp_bytes = export_png_webp(processed)
-        await callback.message.answer_document(
-            BufferedInputFile(png_bytes, filename="emoji.png"),
-            caption="Done! Here is your Telegram-compatible static emoji.",
-        )
-        await callback.message.answer_document(
-            BufferedInputFile(webp_bytes, filename="emoji.webp"),
-        )
-        await callback.answer("Срисовано")
         return
 
     await callback.answer("Mode updated")
@@ -226,6 +321,7 @@ async def process_image(message: Message) -> None:
     try:
         image_bytes = await _download_message_file(message)
         if message.from_user:
+            USER_LAST_ORIGINAL_IMAGES[message.from_user.id] = image_bytes
             if message.photo:
                 USER_LAST_FILE_IDS[message.from_user.id] = message.photo[-1].file_id
             elif message.document:
@@ -246,6 +342,44 @@ async def process_image(message: Message) -> None:
         logger.exception("Unexpected error while processing uploaded image")
         await message.answer("Failed to process image. Please try another file.")
         return
+
+
+@router.callback_query(F.data.startswith("redraw:"))
+async def tune_redraw(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id if callback.from_user else None
+    settings = _clamp_redraw_settings(_get_redraw_settings(user_id))
+    options = _get_options(user_id)
+
+    action = "apply"
+    if callback.data and ":" in callback.data:
+        action = callback.data.split(":", maxsplit=1)[1]
+
+    if action == "softer":
+        settings.blur += 0.05
+        settings.sharpen -= 5
+    elif action == "sharper":
+        settings.blur -= 0.05
+        settings.sharpen += 5
+    elif action == "denser":
+        settings.scale += 0.01
+    elif action == "colors_down":
+        settings.colors -= 8
+    elif action == "colors_up":
+        settings.colors += 8
+    elif action == "outline":
+        settings.outline = not settings.outline
+    elif action == "reset":
+        settings = RedrawSettings()
+        if user_id is not None:
+            USER_REDRAW_SETTINGS[user_id] = settings
+
+    settings = _clamp_redraw_settings(settings)
+    await _process_redraw_callback(
+        callback,
+        options=options,
+        settings=settings,
+        user_id=user_id,
+    )
 
 
 @router.message()

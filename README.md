@@ -22,3 +22,4 @@ Telegram bot for converting images into Telegram-compatible emoji assets.
 - Style mode
 - Clean mode
 - Срисовать
+- REDRAW tuning: Мягче, Чётче, Плотнее, Цветов -, Цветов +, Контур, Сброс

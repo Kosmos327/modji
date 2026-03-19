@@ -9,13 +9,18 @@ from PIL import Image, ImageEnhance, ImageFilter, UnidentifiedImageError
 
 CANVAS_SIZE = 100
 SCALE_RATIO = 0.85
-REDRAW_SCALE_RATIO = 0.90
+REDRAW_SCALE_RATIO = 0.92
 MAX_CONTENT_SIZE = int(CANVAS_SIZE * SCALE_RATIO)
 REDRAW_MAX_CONTENT_SIZE = int(CANVAS_SIZE * REDRAW_SCALE_RATIO)
 BACKGROUND_THRESHOLD = 240
 PROCESSING_MODE_FAST = "FAST"
 PROCESSING_MODE_CLEAN = "CLEAN"
-REDRAW_COLOR_COUNT = 96
+REDRAW_DEFAULT_COLORS = 64
+REDRAW_DEFAULT_BLUR = 0.35
+REDRAW_DEFAULT_SHARPEN = 105
+REDRAW_DEFAULT_SCALE = 0.92
+REDRAW_DEFAULT_OUTLINE = True
+REDRAW_DEFAULT_OUTLINE_THICKNESS = 1
 
 
 class ImageProcessingError(Exception):
@@ -169,16 +174,44 @@ def apply_emoji_style(image: Image.Image) -> Image.Image:
     return styled_rgb
 
 
-def apply_redraw_style(image: Image.Image) -> Image.Image:
+def clamp_redraw_settings(
+    *,
+    colors: int,
+    blur: float,
+    sharpen: int,
+    scale: float,
+    outline_thickness: int,
+) -> tuple[int, float, int, float, int]:
+    clamped_colors = max(32, min(128, int(colors)))
+    clamped_blur = max(0.0, min(0.8, float(blur)))
+    clamped_sharpen = max(60, min(140, int(sharpen)))
+    clamped_scale = max(0.82, min(0.96, float(scale)))
+    clamped_outline_thickness = max(0, min(2, int(outline_thickness)))
+    return (
+        clamped_colors,
+        clamped_blur,
+        clamped_sharpen,
+        clamped_scale,
+        clamped_outline_thickness,
+    )
+
+
+def apply_redraw_style(
+    image: Image.Image,
+    *,
+    redraw_colors: int = REDRAW_DEFAULT_COLORS,
+    redraw_blur: float = REDRAW_DEFAULT_BLUR,
+    redraw_sharpen: int = REDRAW_DEFAULT_SHARPEN,
+) -> Image.Image:
     rgba = image.convert("RGBA")
     alpha = rgba.split()[-1]
     quantized = rgba.convert("RGB").quantize(
-        colors=REDRAW_COLOR_COUNT,
+        colors=redraw_colors,
         method=Image.Quantize.MEDIANCUT,
     )
-    redrawn = quantized.convert("RGB").filter(ImageFilter.GaussianBlur(radius=0.5))
+    redrawn = quantized.convert("RGB").filter(ImageFilter.GaussianBlur(radius=redraw_blur))
     redrawn = redrawn.filter(
-        ImageFilter.UnsharpMask(radius=1, percent=115, threshold=3)
+        ImageFilter.UnsharpMask(radius=1, percent=redraw_sharpen, threshold=3)
     )
     redrawn.putalpha(alpha)
     return redrawn
@@ -193,8 +226,12 @@ def build_emoji_image(
     with_outline: bool = False,
     outline_thickness: int = 2,
     redraw_mode: bool = False,
-    redraw_outline: bool = True,
-    redraw_outline_thickness: int = 1,
+    redraw_colors: int = REDRAW_DEFAULT_COLORS,
+    redraw_blur: float = REDRAW_DEFAULT_BLUR,
+    redraw_sharpen: int = REDRAW_DEFAULT_SHARPEN,
+    redraw_scale: float = REDRAW_DEFAULT_SCALE,
+    redraw_outline: bool = REDRAW_DEFAULT_OUTLINE,
+    redraw_outline_thickness: int = REDRAW_DEFAULT_OUTLINE_THICKNESS,
 ) -> Image.Image:
     # 1-2. Open image and normalize to RGBA.
     image = _open_rgba(image_bytes)
@@ -216,11 +253,33 @@ def build_emoji_image(
     image = image.crop(bbox)
 
     # 7. Scale object proportionally to fit based on mode-specific ratio.
-    max_content_size = REDRAW_MAX_CONTENT_SIZE if redraw_mode else MAX_CONTENT_SIZE
+    if redraw_mode:
+        (
+            redraw_colors,
+            redraw_blur,
+            redraw_sharpen,
+            redraw_scale,
+            redraw_outline_thickness,
+        ) = clamp_redraw_settings(
+            colors=redraw_colors,
+            blur=redraw_blur,
+            sharpen=redraw_sharpen,
+            scale=redraw_scale,
+            outline_thickness=redraw_outline_thickness,
+        )
+
+    max_content_size = (
+        int(CANVAS_SIZE * redraw_scale) if redraw_mode else MAX_CONTENT_SIZE
+    )
     image = _resize_to_fit(image, max_side=max_content_size)
 
     if redraw_mode:
-        image = apply_redraw_style(image)
+        image = apply_redraw_style(
+            image,
+            redraw_colors=redraw_colors,
+            redraw_blur=redraw_blur,
+            redraw_sharpen=redraw_sharpen,
+        )
     elif apply_style:
         image = apply_emoji_style(image)
 
