@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_MIME_PREFIXES = ("image/",)
 ENABLE_BACKGROUND_REMOVAL = os.getenv("ENABLE_BACKGROUND_REMOVAL", "0") == "1"
 BATCH_GROUP_WAIT_TIMEOUT = 1.2
-NO_IMAGE_FOUND_MESSAGE = "No image found. Send an image first."
+NO_IMAGE_FOUND_MESSAGE = "Сначала отправь изображение"
 REDRAW_BLUR_STEP = 0.05
 REDRAW_SHARPEN_STEP = 5
 REDRAW_SCALE_STEP = 0.01
@@ -74,12 +74,12 @@ def _mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Normal", callback_data="mode:normal"),
-                InlineKeyboardButton(text="Face mode", callback_data="mode:face"),
+                InlineKeyboardButton(text="Обычный", callback_data="mode:normal"),
+                InlineKeyboardButton(text="По лицу", callback_data="mode:face"),
             ],
             [
-                InlineKeyboardButton(text="Style mode", callback_data="mode:style"),
-                InlineKeyboardButton(text="Clean mode", callback_data="mode:clean"),
+                InlineKeyboardButton(text="Стиль", callback_data="mode:style"),
+                InlineKeyboardButton(text="Очистить фон", callback_data="mode:clean"),
             ],
             [
                 InlineKeyboardButton(text="Срисовать", callback_data="mode:redraw"),
@@ -90,7 +90,7 @@ def _mode_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="Плотнее", callback_data="redraw:denser"),
-                InlineKeyboardButton(text="Цветов -", callback_data="redraw:colors_down"),
+                InlineKeyboardButton(text="Цветов −", callback_data="redraw:colors_down"),
                 InlineKeyboardButton(text="Цветов +", callback_data="redraw:colors_up"),
             ],
             [
@@ -131,14 +131,14 @@ def _clamp_redraw_settings(settings: RedrawSettings) -> RedrawSettings:
 
 
 def _redraw_status_text(settings: RedrawSettings) -> str:
-    outline_state = "вкл" if settings.outline else "выкл"
+    outline_state = "включён" if settings.outline else "выключен"
     return (
-        "REDRAW: "
-        f"colors={settings.colors}, "
-        f"blur={settings.blur:.2f}, "
-        f"sharpen={settings.sharpen}, "
-        f"scale={settings.scale:.2f}, "
-        f"outline={outline_state}"
+        "Срисовать:\n"
+        f"Цветов: {settings.colors}\n"
+        f"Мягкость: {settings.blur:.2f}\n"
+        f"Резкость: {settings.sharpen}\n"
+        f"Размер: {settings.scale:.2f}\n"
+        f"Контур: {outline_state}"
     )
 
 
@@ -156,14 +156,14 @@ async def _download_message_file(message: Message) -> bytes:
         if document.mime_type and not any(
             document.mime_type.startswith(prefix) for prefix in SUPPORTED_MIME_PREFIXES
         ):
-            raise ImageProcessingError("Unsupported file type. Please send an image.")
+            raise ImageProcessingError("Неподдерживаемый тип файла. Отправь изображение.")
         file = await message.bot.get_file(document.file_id)
         if not file.file_path:
             raise ImageProcessingError("Failed to download image file.")
         data = await message.bot.download_file(file.file_path)
         return data.read()
 
-    raise ImageProcessingError("Please send an image as photo or document.")
+    raise ImageProcessingError("Отправь изображение как фото или документ.")
 
 
 def _build_emoji_from_bytes(
@@ -225,13 +225,13 @@ async def _process_redraw_callback(
     png_bytes, webp_bytes = export_png_webp(processed)
     await callback.message.answer_document(
         BufferedInputFile(png_bytes, filename="emoji.png"),
-        caption="Done! Here is your Telegram-compatible static emoji.",
+        caption="Готово 👇",
     )
     await callback.message.answer_document(
         BufferedInputFile(webp_bytes, filename="emoji.webp"),
     )
     await callback.message.answer(_redraw_status_text(settings))
-    await callback.answer("Срисовано")
+    await callback.answer("Готово 👇")
 
 
 async def _process_single_image(
@@ -241,7 +241,7 @@ async def _process_single_image(
     png_bytes, webp_bytes = export_png_webp(processed)
     await message.answer_document(
         BufferedInputFile(png_bytes, filename="emoji.png"),
-        caption="Done! Here is your Telegram-compatible static emoji.",
+        caption="Готово 👇",
     )
     await message.answer_document(
         BufferedInputFile(webp_bytes, filename="emoji.webp"),
@@ -261,15 +261,14 @@ async def _flush_media_group(media_group_id: str) -> None:
     zip_bytes = export_batch_zip(processed_images)
     await message.answer_document(
         BufferedInputFile(zip_bytes, filename="emoji_batch.zip"),
-        caption="Done! Batch archive is ready.",
+        caption="Готово 👇",
     )
 
 
 @router.message(Command("start"))
 async def start_command(message: Message) -> None:
     await message.answer(
-        "Hi! Send an image (or album) and I will convert it to emoji.\n"
-        "Use the buttons below to switch processing mode.",
+        "Отправь изображение, и я сделаю из него эмодзи 👇",
         reply_markup=_mode_keyboard(),
     )
 
@@ -277,7 +276,7 @@ async def start_command(message: Message) -> None:
 @router.message(Command("batch"))
 async def batch_command(message: Message) -> None:
     await message.answer(
-        "Send multiple images as a media group/album and I will return emoji_batch.zip.",
+        "Отправь несколько изображений альбомом, и я соберу emoji_batch.zip 👇",
         reply_markup=_mode_keyboard(),
     )
 
@@ -315,9 +314,9 @@ async def set_mode(callback: CallbackQuery) -> None:
         )
         return
 
-    await callback.answer("Mode updated")
+    await callback.answer("Режим обновлён")
     if callback.message:
-        await callback.message.answer("Mode set. Send an image or album.")
+        await callback.message.answer("Режим выбран. Отправь изображение или альбом 👇")
 
 
 @router.message(F.photo | F.document)
@@ -344,7 +343,7 @@ async def process_image(message: Message) -> None:
         return
     except Exception:
         logger.exception("Unexpected error while processing uploaded image")
-        await message.answer("Failed to process image. Please try another file.")
+        await message.answer("Не удалось обработать изображение. Попробуй другой файл.")
         return
 
 
@@ -389,8 +388,8 @@ async def tune_redraw(callback: CallbackQuery) -> None:
 @router.message()
 async def help_message(message: Message) -> None:
     await message.answer(
-        "Send an image and I will convert it to emoji.\n"
-        "Single image: emoji.png + emoji.webp\n"
-        "Album (/batch): emoji_batch.zip",
+        "Отправь изображение, и я сделаю из него эмодзи 👇\n"
+        "Один файл: emoji.png + emoji.webp\n"
+        "Альбом (/batch): emoji_batch.zip",
         reply_markup=_mode_keyboard(),
     )
