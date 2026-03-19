@@ -38,6 +38,10 @@ SUPPORTED_MIME_PREFIXES = ("image/",)
 ENABLE_BACKGROUND_REMOVAL = os.getenv("ENABLE_BACKGROUND_REMOVAL", "0") == "1"
 BATCH_GROUP_WAIT_TIMEOUT = 1.2
 NO_IMAGE_FOUND_MESSAGE = "No image found. Send an image first."
+REDRAW_BLUR_STEP = 0.05
+REDRAW_SHARPEN_STEP = 5
+REDRAW_SCALE_STEP = 0.01
+REDRAW_COLORS_STEP = 8
 
 
 @dataclass
@@ -127,7 +131,7 @@ def _clamp_redraw_settings(settings: RedrawSettings) -> RedrawSettings:
 
 
 def _redraw_status_text(settings: RedrawSettings) -> str:
-    outline_state = "on" if settings.outline else "off"
+    outline_state = "вкл" if settings.outline else "выкл"
     return (
         "REDRAW: "
         f"colors={settings.colors}, "
@@ -355,17 +359,17 @@ async def tune_redraw(callback: CallbackQuery) -> None:
         action = callback.data.split(":", maxsplit=1)[1]
 
     if action == "softer":
-        settings.blur += 0.05
-        settings.sharpen -= 5
+        settings.blur += REDRAW_BLUR_STEP
+        settings.sharpen -= REDRAW_SHARPEN_STEP
     elif action == "sharper":
-        settings.blur -= 0.05
-        settings.sharpen += 5
+        settings.blur -= REDRAW_BLUR_STEP
+        settings.sharpen += REDRAW_SHARPEN_STEP
     elif action == "denser":
-        settings.scale += 0.01
+        settings.scale += REDRAW_SCALE_STEP
     elif action == "colors_down":
-        settings.colors -= 8
+        settings.colors -= REDRAW_COLORS_STEP
     elif action == "colors_up":
-        settings.colors += 8
+        settings.colors += REDRAW_COLORS_STEP
     elif action == "outline":
         settings.outline = not settings.outline
     elif action == "reset":
