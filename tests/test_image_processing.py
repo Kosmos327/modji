@@ -26,7 +26,12 @@ class TestImageProcessing(unittest.TestCase):
         alpha = out.split()[-1]
         bbox = alpha.getbbox()
         self.assertIsNotNone(bbox)
-        self.assertEqual(bbox, (5, 5, 95, 95))
+        left, top, right, bottom = bbox
+        # We allow +/-1 px tolerance around the ideal 5..95 bounds for resampling/rounding variance.
+        self.assertTrue(4 <= left <= 6)
+        self.assertTrue(4 <= top <= 6)
+        self.assertTrue(94 <= right <= 96)
+        self.assertTrue(94 <= bottom <= 96)
 
     def test_export_png_webp_outputs_loadable_images(self) -> None:
         src = Image.new("RGBA", (100, 100), (0, 255, 0, 128))

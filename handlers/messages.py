@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 
 from aiogram import F, Router
@@ -8,25 +9,32 @@ from aiogram.types import BufferedInputFile, Message
 from image_processing import ImageProcessingError, build_emoji_image, export_png_webp
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 SUPPORTED_MIME_PREFIXES = ("image/",)
 ENABLE_BACKGROUND_REMOVAL = os.getenv("ENABLE_BACKGROUND_REMOVAL", "0") == "1"
 
 
-async def _download_message_file(message: Message) -> tuple[bytes, str]:
+async def _download_message_file(message: Message) -> bytes:
     if message.photo:
         photo = message.photo[-1]
         file = await message.bot.get_file(photo.file_id)
+        if not file.file_path:
+            raise ImageProcessingError("Failed to download image file.")
         data = await message.bot.download_file(file.file_path)
-        return data.read(), "photo.jpg"
+        return data.read()
 
     if message.document:
         document = message.document
-        if document.mime_type and not document.mime_type.startswith(SUPPORTED_MIME_PREFIXES):
+        if document.mime_type and not any(
+            document.mime_type.startswith(prefix) for prefix in SUPPORTED_MIME_PREFIXES
+        ):
             raise ImageProcessingError("Unsupported file type. Please send an image.")
         file = await message.bot.get_file(document.file_id)
+        if not file.file_path:
+            raise ImageProcessingError("Failed to download image file.")
         data = await message.bot.download_file(file.file_path)
-        return data.read(), document.file_name or "document"
+        return data.read()
 
     raise ImageProcessingError("Please send an image as photo or document.")
 
@@ -34,7 +42,7 @@ async def _download_message_file(message: Message) -> tuple[bytes, str]:
 @router.message(F.photo | F.document)
 async def process_image(message: Message) -> None:
     try:
-        image_bytes, filename = await _download_message_file(message)
+        image_bytes = await _download_message_file(message)
         processed = build_emoji_image(
             image_bytes=image_bytes,
             remove_background=ENABLE_BACKGROUND_REMOVAL,
@@ -44,6 +52,7 @@ async def process_image(message: Message) -> None:
         await message.answer(str(exc))
         return
     except Exception:
+        logger.exception("Unexpected error while processing uploaded image")
         await message.answer("Failed to process image. Please try another file.")
         return
 

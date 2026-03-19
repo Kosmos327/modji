@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from io import BytesIO
-from typing import Tuple
 
 import numpy as np
 from PIL import Image, ImageFilter, UnidentifiedImageError
@@ -24,17 +23,15 @@ def _remove_background_if_enabled(image: Image.Image, enabled: bool) -> Image.Im
         return image
     try:
         from rembg import remove
-    except BaseException as exc:  # pragma: no cover - optional dependency runtime failures
+    except Exception as exc:  # pragma: no cover - optional dependency runtime failures
         raise ImageProcessingError("Background removal is not available.") from exc
-    if remove is None:
-        raise ImageProcessingError("Background removal is not available.")
     output = remove(image)
     if isinstance(output, bytes):
         return Image.open(BytesIO(output)).convert("RGBA")
     return output.convert("RGBA")
 
 
-def _content_bbox(image: Image.Image) -> Tuple[int, int, int, int]:
+def _content_bbox(image: Image.Image) -> tuple[int, int, int, int]:
     alpha = np.array(image.split()[-1])
     ys, xs = np.where(alpha > 0)
     if xs.size == 0 or ys.size == 0:
@@ -50,7 +47,7 @@ def _resize_to_fit(image: Image.Image, max_side: int = 90) -> Image.Image:
         raise ImageProcessingError("Invalid image dimensions.")
     scale = min(max_side / width, max_side / height)
     new_size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
-    return image.resize(new_size, Image.LANCZOS)
+    return image.resize(new_size, Image.Resampling.LANCZOS)
 
 
 def build_emoji_image(image_bytes: bytes, remove_background: bool = False) -> Image.Image:
